@@ -1,0 +1,103 @@
+﻿@model SemanticSearch.Models.SearchViewModel
+@{
+    ViewData["Title"] = "Semantik Arama";
+}
+
+<h1>Semantik Arama (Bogus + ML.NET)</h1>
+
+<form method="get" asp-controller="Home" asp-action="Index" class="mb-3">
+    <div class="row g-2 align-items-center">
+        <div class="col-md-8">
+            <input type="text" name="q" value="@Model?.Query" class="form-control" placeholder="Ne aramak istersiniz?" />
+        </div>
+        <div class="col-md-2">
+            <div class="input-group">
+                <span class="input-group-text">Min Score</span>
+                <input type="number" name="minScore" step="0.01" min="0" max="1" value="@Model.MinScore.ToString("0.00")" class="form-control" />
+            </div>
+        </div>
+        <div class="col-md-2">
+            <button type="submit" class="btn btn-primary w-100">Ara</button>
+        </div>
+    </div>
+</form>
+
+@if (!string.IsNullOrWhiteSpace(Model?.Query))
+{
+    <p><strong>@Model.Results.Count</strong> sonuç gösteriliyor. Toplam belge: @ViewBag.Total. Eşik: <strong>@Model.MinScore.ToString("0.00")</strong></p>
+}
+else
+{
+    <p>Bir sorgu girin. Örnek: spor, ekonomi piyasaları, yapay zeka</p>
+}
+
+<div class="row mb-3">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">Gönderen İstatistikleri (Kümülatif)</div>
+            <div class="card-body">
+                <p>Toplam Doküman: <strong>@Model.Stats.Total</strong></p>
+                <p>Ortalama Yaş: <strong>@Model.Stats.AvgAge.ToString("0.0")</strong></p>
+                <div class="row">
+                    <div class="col-sm-6">
+                        <h6>Şehre Göre</h6>
+                        <ul class="list-unstyled">
+                            @foreach (var kv in Model.Stats.ByCity)
+                            {
+                                <li>@kv.Key: <strong>@kv.Value</strong></li>
+                            }
+                        </ul>
+                    </div>
+                    <div class="col-sm-6">
+                        <h6>Cinsiyete Göre</h6>
+                        <ul class="list-unstyled">
+                            @foreach (var kv in Model.Stats.ByGender)
+                            {
+                                <li>@kv.Key: <strong>@kv.Value</strong></li>
+                            }
+                        </ul>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">Arama İstatistikleri (Bu Sorgu)</div>
+            <div class="card-body">
+                @if (Model.SearchStats is null || string.IsNullOrWhiteSpace(Model.Query))
+                {
+                    <div class="text-muted">İstatistik görmek için bir arama yapın.</div>
+                }
+                else
+                {
+                    <p>Arama: <strong>@Model.SearchStats.Query</strong></p>
+                    <p>Toplam Değerlendirilen Doküman: <strong>@Model.SearchStats.TotalDocs</strong></p>
+                    <p>Eşik Üstü Sayı: <strong>@Model.SearchStats.AboveThresholdCount</strong> — Eşik Altı Sayı: <strong>@Model.SearchStats.BelowThresholdCount</strong></p>
+                    <p>Toplama Oranı (Coverage): <strong>@(Model.SearchStats.CoverageRatio.ToString("0.0%"))</strong></p>
+                    <p>Ortalama Skor (Tümü): <strong>@Model.SearchStats.AvgScoreAll.ToString("0.000")</strong></p>
+                    <p>Ortalama Skor (Eşik Üstü): <strong>@Model.SearchStats.AvgScoreAbove.ToString("0.000")</strong></p>
+                    <p>En Yüksek Skor: <strong>@Model.SearchStats.TopScore.ToString("0.000")</strong></p>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+<ul class="list-group">
+@foreach (var r in Model?.Results ?? Enumerable.Empty<SemanticSearch.Models.SearchResult>())
+{
+    <li class="list-group-item">
+        <div class="d-flex justify-content-between">
+            <strong>@r.Document.Title</strong>
+            <span class="badge bg-secondary">@r.Score.ToString("0.000")</span>
+        </div>
+        <div class="text-muted">Kategori: @r.Document.Category</div>
+        <div class="small text-muted">
+            Gönderen: @r.Document.SubmitterName (@r.Document.SubmitterAge) - @r.Document.SubmitterGender, @r.Document.SubmitterCity - Tel: @r.Document.SubmitterPhone
+        </div>
+        <div>@(r.Document.Content.Length > 300 ? r.Document.Content.Substring(0, 300) + "..." : r.Document.Content)</div>
+    </li>
+}
+</ul>
