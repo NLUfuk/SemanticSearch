@@ -11,19 +11,21 @@ namespace SemanticSearch.Services;
 public interface ISemanticSearchService
 {
     IReadOnlyList<Document> AllDocuments { get; }
-    (IReadOnlyList<SearchResult> results, int total) Search(string? query, int take = 20);
+    (IReadOnlyList<SearchResult> results, int total) Search(string? query, int take = 20, float alpha = 0.4f, bool hybrid = true, string type = "hybrid");
 }
 
-public class SemanticSearchService : ISemanticSearchService
+public class SemanticSearchService : ISemanticSearchService, IDisposable
 {
     private readonly MLContext _ml;
     private readonly List<Document> _docs;
 
-    // ML.NET objects for text featurization
+    // ML.NET objects for text featurization (vector baseline)
     private readonly ITransformer _featurizer;
-    private readonly DataViewSchema _schema;
-
     private readonly float[][] _docVectors; // cached vectors for docs
+
+    // Hybrid components
+    private readonly IVectorStore _vecStore;
+    private readonly ILexicalStore _lexStore;
 
     public IReadOnlyList<Document> AllDocuments => _docs;
 
@@ -34,40 +36,101 @@ public class SemanticSearchService : ISemanticSearchService
         // 1) Generate fake documents
         _docs = GenerateFakeDocuments(1000);
 
-        // 2) Build featurization pipeline (use FeaturizeText with hashing to handle unseen words)
+        // 2) Vector featurizer (hashed n-grams)
         var data = _ml.Data.LoadFromEnumerable(_docs.Select(d => new DocInput { Text = BuildSearchText(d) }));
         var pipeline = _ml.Transforms.Text.FeaturizeText(outputColumnName: "Features", inputColumnName: nameof(DocInput.Text));
-
         _featurizer = pipeline.Fit(data);
-        _schema = _featurizer.GetOutputSchema(data.Schema);
 
-        // 3) Cache vectors for all docs for fast search
+        // 3) Cache vectors and fill vector store
         var transformed = _featurizer.Transform(data);
         _docVectors = _ml.Data.CreateEnumerable<DocFeatures>(transformed, reuseRowObject: false)
             .Select(r => r.Features)
             .Select(v => v is null ? Array.Empty<float>() : v)
             .ToArray();
+
+        _vecStore = new InMemoryVectorStore();
+        for (int i = 0; i < _docs.Count; i++)
+        {
+            _vecStore.Upsert(_docs[i].Id.ToString(), _docVectors[i], _docs[i]);
+        }
+
+        // 4) Lucene lexical store (TurkishAnalyzer + BM25 + fuzzy)
+        _lexStore = new LuceneLexicalStore(_docs);
     }
 
-    public (IReadOnlyList<SearchResult> results, int total) Search(string? query, int take = 20)
+    public (IReadOnlyList<SearchResult> results, int total) Search(string? query, int take = 20, float alpha = 0.4f, bool hybrid = true, string type = "hybrid")
     {
         if (string.IsNullOrWhiteSpace(query))
         {
             return (Array.Empty<SearchResult>(), _docs.Count);
         }
 
-        var queryVec = Vectorize(query);
-
-        var scored = _docs.Select((d, i) => new SearchResult
+        type = type?.ToLowerInvariant();
+        return type switch
         {
-            Document = d,
-            Score = CosineSimilarity(queryVec, _docVectors[i])
+            "lexical" => RunLexical(query, take),
+            "semantic" => RunSemantic(query, take),
+            _ => RunHybrid(query, take, alpha)
+        };
+    }
+
+    private (IReadOnlyList<SearchResult>, int) RunLexical(string query, int take)
+    {
+        var hits = _lexStore.Search(query, take).ToList();
+        var results = hits.Select(x => new SearchResult
+        {
+            Document = _docs.First(d => d.Id.ToString() == x.id),
+            Score = (float)x.score
+        }).ToList();
+        return (results, _docs.Count);
+    }
+
+    private (IReadOnlyList<SearchResult>, int) RunSemantic(string query, int take)
+    {
+        var qv = Vectorize(query);
+        var hits = _vecStore.Similar(qv, take).ToList();
+        var results = hits.Select(x => new SearchResult
+        {
+            Document = _docs.First(d => d.Id.ToString() == x.id),
+            Score = x.cosine
+        }).ToList();
+        return (results, _docs.Count);
+    }
+
+    private (IReadOnlyList<SearchResult>, int) RunHybrid(string query, int take, float alpha)
+    {
+        var k = Math.Max(take * 5, 50);
+        var qVec = Vectorize(query);
+        var vecTop = _vecStore.Similar(qVec, k).ToDictionary(t => t.id, t => (double)t.cosine);
+        var lexTop = _lexStore.Search(query, k).ToDictionary(t => t.id, t => t.score);
+
+        static Dictionary<string, double> Normalize(Dictionary<string, double> src)
+        {
+            if (src.Count == 0) return src;
+            var max = src.Values.Max();
+            if (max <= 0) return src.ToDictionary(kv => kv.Key, kv => 0d);
+            return src.ToDictionary(kv => kv.Key, kv => kv.Value / max);
+        }
+
+        var vN = Normalize(vecTop);
+        var lN = Normalize(lexTop);
+        var ids = new HashSet<string>(vN.Keys.Concat(lN.Keys));
+
+        var merged = ids.Select(id => new
+        {
+            id,
+            score = alpha * (lN.TryGetValue(id, out var ls) ? ls : 0) + (1 - alpha) * (vN.TryGetValue(id, out var vs) ? vs : 0)
         })
-        .OrderByDescending(r => r.Score)
+        .OrderByDescending(x => x.score)
         .Take(take)
+        .Select(x => new SearchResult
+        {
+            Document = _docs.First(d => d.Id.ToString() == x.id),
+            Score = (float)x.score
+        })
         .ToList();
 
-        return (scored, _docs.Count);
+        return (merged, _docs.Count);
     }
 
     private float[] Vectorize(string text)
@@ -79,31 +142,15 @@ public class SemanticSearchService : ISemanticSearchService
         return row.Features ?? Array.Empty<float>();
     }
 
-    private static float CosineSimilarity(IReadOnlyList<float> a, IReadOnlyList<float> b)
-    {
-        if (a.Count == 0 || b.Count == 0) return 0f;
-        int len = Math.Min(a.Count, b.Count);
-        double dot = 0, na = 0, nb = 0;
-        for (int i = 0; i < len; i++)
-        {
-            var x = a[i];
-            var y = b[i];
-            dot += x * y;
-            na += x * x;
-            nb += y * y;
-        }
-        if (na == 0 || nb == 0) return 0f;
-        return (float)(dot / (Math.Sqrt(na) * Math.Sqrt(nb)));
-    }
-
     private static string BuildSearchText(Document d)
     {
-        // Ýçerikte gönderen bilgilerini de indeksle ki aramada görünsün
+        var titleBoost = string.Join(' ', Enumerable.Repeat(d.Title, 2));
+        var categoryBoost = string.Join(' ', Enumerable.Repeat(d.Category, 2));
         return string.Join('\n', new[]
         {
-            d.Title,
+            titleBoost,
             d.Content,
-            d.Category,
+            categoryBoost,
             d.SubmitterName,
             d.SubmitterGender,
             d.SubmitterCity,
@@ -114,18 +161,16 @@ public class SemanticSearchService : ISemanticSearchService
 
     private static List<Document> GenerateFakeDocuments(int count)
     {
-        var faker = new Faker("tr");
+        var faker = new Bogus.Faker("tr");
         var categories = new[] { "Teknoloji", "Spor", "Ekonomi", "Kültür", "Saðlýk" };
-
         var genders = new[] { "Erkek", "Kadýn" };
         var cities = new[] { "Ýstanbul", "Ankara", "Ýzmir", "Bursa", "Antalya", "Adana", "Konya", "Gaziantep","Denizli" };
 
-        var docFaker = new Faker<Document>("tr")
+        var docFaker = new Bogus.Faker<Document>("tr")
             .RuleFor(d => d.Id, f => f.IndexFaker)
             .RuleFor(d => d.Title, f => f.Lorem.Sentence(4, 6))
             .RuleFor(d => d.Content, f => f.Lorem.Paragraphs(2, 4))
             .RuleFor(d => d.Category, f => f.PickRandom(categories))
-            // submitter
             .RuleFor(d => d.SubmitterName, f => f.Name.FullName())
             .RuleFor(d => d.SubmitterAge, f => f.Random.Int(18, 75))
             .RuleFor(d => d.SubmitterPhone, f => f.Phone.PhoneNumber("05#########"))
@@ -134,7 +179,13 @@ public class SemanticSearchService : ISemanticSearchService
 
         return docFaker.Generate(count);
     }
-     
+
+    public void Dispose()
+    {
+        if (_lexStore is IDisposable disp)
+            disp.Dispose();
+    }
+
     private class DocInput
     {
         public string Text { get; set; } = string.Empty;

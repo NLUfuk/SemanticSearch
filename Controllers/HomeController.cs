@@ -18,51 +18,38 @@ namespace SemanticSearch.Controllers
         }
 
         [HttpGet]
-        public IActionResult Index(string? q, float? minScore)
+        public IActionResult Index(string? q, float? minScore, string? type, float? alpha)
         {
             var threshold = minScore ?? 0.10f; // varsayýlan eþik
+            var mode = string.IsNullOrWhiteSpace(type) ? "hybrid" : type;
+            var blend = alpha ?? 0.4f;
 
-            // Tüm dokümanlar üzerinden skorlarý al (istatistik için)
             var totalDocs = _search.AllDocuments.Count;
-            var (allResults, total) = _search.Search(q, totalDocs);
+            var (allResultsRaw, total) = _search.Search(q, totalDocs, blend, hybrid: mode == "hybrid", type: mode);
 
-            // Kümülatif gönderici istatistikleri
+            var above = allResultsRaw.Where(r => r.Score >= threshold).ToList();
+            var display = above.OrderByDescending(r => r.Score).Take(20).ToList();
+
             var allDocs = _search.AllDocuments;
             var stats = new SubmitterStats
             {
                 Total = allDocs.Count,
-                ByCity = allDocs
-                    .GroupBy(d => d.SubmitterCity)
-                    .OrderByDescending(g => g.Count())
-                    .ToDictionary(g => g.Key, g => g.Count()),
-                ByGender = allDocs
-                    .GroupBy(d => d.SubmitterGender)
-                    .OrderByDescending(g => g.Count())
-                    .ToDictionary(g => g.Key, g => g.Count()),
+                ByCity = allDocs.GroupBy(d => d.SubmitterCity).OrderByDescending(g => g.Count()).ToDictionary(g => g.Key, g => g.Count()),
+                ByGender = allDocs.GroupBy(d => d.SubmitterGender).OrderByDescending(g => g.Count()).ToDictionary(g => g.Key, g => g.Count()),
                 AvgAge = allDocs.Any() ? allDocs.Average(d => d.SubmitterAge) : 0
             };
-
-            // Arama bazlý istatistikler ve filtreleme
-            var above = allResults.Where(r => r.Score >= threshold).ToList();
-            var belowCount = allResults.Count - above.Count;
 
             var searchStats = new SearchStats
             {
                 Query = q ?? string.Empty,
                 MinScore = threshold,
-                TotalDocs = allResults.Count,
+                TotalDocs = allResultsRaw.Count,
                 AboveThresholdCount = above.Count,
-                BelowThresholdCount = belowCount,
-                AvgScoreAll = allResults.Count == 0 ? 0 : allResults.Average(r => r.Score),
+                BelowThresholdCount = allResultsRaw.Count - above.Count,
+                AvgScoreAll = allResultsRaw.Count == 0 ? 0 : allResultsRaw.Average(r => r.Score),
                 AvgScoreAbove = above.Count == 0 ? 0 : above.Average(r => r.Score),
-                TopScore = allResults.Count == 0 ? 0 : allResults.Max(r => r.Score)
+                TopScore = allResultsRaw.Count == 0 ? 0 : allResultsRaw.Max(r => r.Score)
             };
-
-            // Sýralamada eþiðin altýndakileri gösterme, ilk 20'yi al
-            var display = above
-                .OrderByDescending(r => r.Score)
-                .Take(20)
-                .ToList();
 
             var vm = new SearchViewModel
             {
@@ -73,6 +60,8 @@ namespace SemanticSearch.Controllers
                 SearchStats = searchStats
             };
             ViewBag.Total = total;
+            ViewBag.Type = mode;
+            ViewBag.Alpha = blend;
             return View(vm);
         }
 
