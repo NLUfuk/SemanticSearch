@@ -43,4 +43,8 @@ public class SearchStats
     public double AvgScoreAll { get; set; }
     public double AvgScoreAbove { get; set; }
     public double TopScore { get; set; }
+
+    // Sorgu (eþik üstü sonuçlar) için ek istatistikler
+    public Dictionary<string, double> GenderRatio { get; set; } = new(); // 0..1
+    public double AvgAge { get; set; }
 }

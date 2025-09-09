@@ -3,6 +3,9 @@ using Microsoft.AspNetCore.Mvc;
 using SemanticSearch.Models;
 using SemanticSearch.Services;
 using System.Linq;
+using System;
+using System.Collections.Generic;
+using System.Text;
 
 namespace SemanticSearch.Controllers
 {
@@ -39,6 +42,16 @@ namespace SemanticSearch.Controllers
                 AvgAge = allDocs.Any() ? allDocs.Average(d => d.SubmitterAge) : 0
             };
 
+            // Sorguya özel oran/ortalama (eþik üstü sonuçlar üzerinden)
+            var aboveDocs = above.Select(r => r.Document).ToList();
+            var genderRatio = aboveDocs.Count == 0
+                ? new Dictionary<string, double>()
+                : aboveDocs
+                    .GroupBy(d => string.IsNullOrWhiteSpace(d.SubmitterGender) ? "Bilinmiyor" : d.SubmitterGender)
+                    .OrderByDescending(g => g.Count())
+                    .ToDictionary(g => g.Key, g => (double)g.Count() / aboveDocs.Count);
+            var avgAgeQuery = aboveDocs.Count == 0 ? 0 : aboveDocs.Average(d => d.SubmitterAge);
+
             var searchStats = new SearchStats
             {
                 Query = q ?? string.Empty,
@@ -48,7 +61,9 @@ namespace SemanticSearch.Controllers
                 BelowThresholdCount = allResultsRaw.Count - above.Count,
                 AvgScoreAll = allResultsRaw.Count == 0 ? 0 : allResultsRaw.Average(r => r.Score),
                 AvgScoreAbove = above.Count == 0 ? 0 : above.Average(r => r.Score),
-                TopScore = allResultsRaw.Count == 0 ? 0 : allResultsRaw.Max(r => r.Score)
+                TopScore = allResultsRaw.Count == 0 ? 0 : allResultsRaw.Max(r => r.Score),
+                GenderRatio = genderRatio,
+                AvgAge = avgAgeQuery
             };
 
             var vm = new SearchViewModel
@@ -63,6 +78,25 @@ namespace SemanticSearch.Controllers
             ViewBag.Type = mode;
             ViewBag.Alpha = blend;
             return View(vm);
+        }
+
+        [HttpGet("generate-texts")]
+        public IActionResult GenerateTexts(int count = 1000)
+        {
+            count = Math.Clamp(count, 1, 5000);
+            var sb = new StringBuilder(capacity: count * 600);
+            for (int i = 0; i < count; i++)
+            {
+                var doc = TextGenerator.Generate();
+                sb.AppendLine($"Metin {i + 1}: {doc.Title}");
+                sb.AppendLine(doc.Content);
+                sb.AppendLine(new string('=', 80));
+                sb.AppendLine();
+            }
+            var content = sb.ToString();
+            var bytes = Encoding.UTF8.GetBytes(content);
+            var filename = $"gelistirilmis_metinler_{DateTime.UtcNow:yyyyMMddHHmmss}.txt";
+            return File(bytes, "text/plain; charset=utf-8", filename);
         }
 
         public IActionResult Privacy()

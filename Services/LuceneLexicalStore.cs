@@ -5,6 +5,9 @@ using Lucene.Net.QueryParsers.Classic;
 using Lucene.Net.Search;
 using Lucene.Net.Util;
 using SemanticSearch.Models;
+using System;
+using System.Linq;
+using System.Text.RegularExpressions;
 using LuceneDirectory = Lucene.Net.Store.Directory;
 using LuceneDocument = Lucene.Net.Documents.Document;
 using LuceneStringField = Lucene.Net.Documents.StringField;
@@ -59,12 +62,10 @@ public class LuceneLexicalStore : ILexicalStore, IDisposable
             DefaultOperator = QueryParserBase.AND_OPERATOR // set AND as default
         };
 
-        var parsed = qp.Parse(QueryParser.Escape(query));
-        // Boost fields manually by wrapping same parsed query with boosts
-        var titleQ = qp.Parse(QueryParser.Escape(query));
-        titleQ.Boost = 2.0f;
-        var categoryQ = qp.Parse(QueryParser.Escape(query));
-        categoryQ.Boost = 1.5f;
+        var escaped = QueryParser.Escape(query);
+        var parsed = qp.Parse(escaped);
+        var titleQ = qp.Parse(escaped); titleQ.Boost = 2.0f;
+        var categoryQ = qp.Parse(escaped); categoryQ.Boost = 1.5f;
         var boolean = new BooleanQuery
         {
             { parsed, Occur.SHOULD },
@@ -72,12 +73,21 @@ public class LuceneLexicalStore : ILexicalStore, IDisposable
             { categoryQ, Occur.SHOULD }
         };
 
-        // Fuzzy: add small fuzzy variant per term (edit distance 1)
+        // Restrict fuzzy to avoid "müzik" -> "fizik" style matches
         var terms = query.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        foreach (var t in terms)
+        var alpha = new Regex("^[A-Za-zÇÐÝÖÞÜçðýöþü]+$", RegexOptions.CultureInvariant);
+        foreach (var t in terms.Select(s => s.ToLowerInvariant()))
         {
-            var fq = new FuzzyQuery(new Term("content", t.ToLowerInvariant()), maxEdits: 1);
-            boolean.Add(fq, Occur.SHOULD);
+            if (t.Length >= 5 && alpha.IsMatch(t))
+            {
+                var fq = new FuzzyQuery(new Term("content", t), maxEdits: 1, prefixLength: 2, maxExpansions: 50, transpositions: true);
+                boolean.Add(fq, Occur.SHOULD);
+            }
+        }
+
+        if (boolean.Clauses.Count > 0)
+        {
+            boolean.MinimumNumberShouldMatch = 1;
         }
 
         var hits = _searcher.Search(boolean, topK).ScoreDocs;

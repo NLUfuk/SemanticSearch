@@ -1,6 +1,7 @@
 using Bogus;
 using Microsoft.ML;
 using Microsoft.ML.Data;
+using Microsoft.ML.Transforms.Text;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -29,7 +30,7 @@ public class SemanticSearchService : ISemanticSearchService, IDisposable
 
     public IReadOnlyList<Document> AllDocuments => _docs;
 
-    public SemanticSearchService()
+    public SemanticSearchService(IVectorStore vecStore)
     {
         _ml = new MLContext(seed: 42);
 
@@ -38,7 +39,26 @@ public class SemanticSearchService : ISemanticSearchService, IDisposable
 
         // 2) Vector featurizer (hashed n-grams)
         var data = _ml.Data.LoadFromEnumerable(_docs.Select(d => new DocInput { Text = BuildSearchText(d) }));
-        var pipeline = _ml.Transforms.Text.FeaturizeText(outputColumnName: "Features", inputColumnName: nameof(DocInput.Text));
+
+        var featurizeOptions = new TextFeaturizingEstimator.Options
+        {
+            CaseMode = TextNormalizingEstimator.CaseMode.Lower,
+            KeepDiacritics = true, // müzik != muzik
+            KeepNumbers = true,
+            KeepPunctuations = false,
+            // Kelime n-gramlarý kalsýn, karakter n-gramlarýný kapat
+            WordFeatureExtractor = new WordBagEstimator.Options
+            {
+                NgramLength = 2,
+                UseAllLengths = true
+            },
+            CharFeatureExtractor = null
+        };
+        var pipeline = _ml.Transforms.Text.FeaturizeText(
+            outputColumnName: "Features",
+            inputColumnName: nameof(DocInput.Text)
+            // Remove: options: featurizeOptions
+);
         _featurizer = pipeline.Fit(data);
 
         // 3) Cache vectors and fill vector store
@@ -48,7 +68,8 @@ public class SemanticSearchService : ISemanticSearchService, IDisposable
             .Select(v => v is null ? Array.Empty<float>() : v)
             .ToArray();
 
-        _vecStore = new InMemoryVectorStore();
+        // Use injected vector store and populate
+        _vecStore = vecStore;
         for (int i = 0; i < _docs.Count; i++)
         {
             _vecStore.Upsert(_docs[i].Id.ToString(), _docVectors[i], _docs[i]);
@@ -162,22 +183,28 @@ public class SemanticSearchService : ISemanticSearchService, IDisposable
     private static List<Document> GenerateFakeDocuments(int count)
     {
         var faker = new Bogus.Faker("tr");
-        var categories = new[] { "Teknoloji", "Spor", "Ekonomi", "Kültür", "Saðlýk" };
         var genders = new[] { "Erkek", "Kadýn" };
-        var cities = new[] { "Ýstanbul", "Ankara", "Ýzmir", "Bursa", "Antalya", "Adana", "Konya", "Gaziantep","Denizli" };
+        var cities = new[] { "Ýstanbul", "Ankara", "Ýzmir", "Bursa", "Antalya", "Adana", "Konya", "Gaziantep", "Denizli" };
 
-        var docFaker = new Bogus.Faker<Document>("tr")
-            .RuleFor(d => d.Id, f => f.IndexFaker)
-            .RuleFor(d => d.Title, f => f.Lorem.Sentence(4, 6))
-            .RuleFor(d => d.Content, f => f.Lorem.Paragraphs(2, 4))
-            .RuleFor(d => d.Category, f => f.PickRandom(categories))
-            .RuleFor(d => d.SubmitterName, f => f.Name.FullName())
-            .RuleFor(d => d.SubmitterAge, f => f.Random.Int(18, 75))
-            .RuleFor(d => d.SubmitterPhone, f => f.Phone.PhoneNumber("05#########"))
-            .RuleFor(d => d.SubmitterGender, f => f.PickRandom(genders))
-            .RuleFor(d => d.SubmitterCity, f => f.PickRandom(cities));
-
-        return docFaker.Generate(count);
+        var list = new List<Document>(capacity: count);
+        for (int i = 0; i < count; i++)
+        {
+            var gen = TextGenerator.Generate();
+            var doc = new Document
+            {
+                Id = i,
+                Title = gen.Title,
+                Content = gen.Content,
+                Category = gen.MainTopic,
+                SubmitterName = faker.Name.FullName(),
+                SubmitterAge = faker.Random.Int(18, 75),
+                SubmitterPhone = faker.Phone.PhoneNumber("05#########"),
+                SubmitterGender = faker.PickRandom(genders),
+                SubmitterCity = faker.PickRandom(cities)
+            };
+            list.Add(doc);
+        }
+        return list;
     }
 
     public void Dispose()

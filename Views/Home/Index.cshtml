@@ -3,7 +3,7 @@
     ViewData["Title"] = "Semantik Arama";
 }
 
-<h1>Semantik Arama (Bogus + ML.NET + Lucene)</h1>
+<h1>Semantik Arama</h1>   @* (Bogus + ML.NET + Lucene *@
 
 <form method="get" asp-controller="Home" asp-action="Index" class="mb-3">
     <div class="row g-2 align-items-center">
@@ -92,6 +92,23 @@ else
                     <p>Ortalama Skor (Tümü): <strong>@Model.SearchStats.AvgScoreAll.ToString("0.000")</strong></p>
                     <p>Ortalama Skor (Eşik Üstü): <strong>@Model.SearchStats.AvgScoreAbove.ToString("0.000")</strong></p>
                     <p>En Yüksek Skor: <strong>@Model.SearchStats.TopScore.ToString("0.000")</strong></p>
+                    <p>Ortalama Yaş (Eşik Üstü): <strong>@Model.SearchStats.AvgAge.ToString("0.0")</strong></p>
+                    <div>
+                        <span>Cinsiyet Oranı (Eşik Üstü):</span>
+                        @if (Model.SearchStats.GenderRatio?.Any() == true)
+                        {
+                            <ul class="list-inline mb-0">
+                                @foreach (var kv in Model.SearchStats.GenderRatio)
+                                {
+                                    <li class="list-inline-item">@kv.Key: <strong>@kv.Value.ToString("0.0%")</strong></li>
+                                }
+                            </ul>
+                        }
+                        else
+                        {
+                            <span class="text-muted">Veri yok</span>
+                        }
+                    </div>
                 }
             </div>
         </div>
@@ -110,7 +127,7 @@ else
         <div class="small text-muted">
             Gönderen: @r.Document.SubmitterName (@r.Document.SubmitterAge) - @r.Document.SubmitterGender, @r.Document.SubmitterCity - Tel: @r.Document.SubmitterPhone
         </div>
-        <div>@(r.Document.Content.Length > 300 ? r.Document.Content.Substring(0, 300) + "..." : r.Document.Content)</div>
+        <div>@r.Document.Content</div>
     </li>
 }
 </ul>

@@ -3,6 +3,19 @@ var builder = WebApplication.CreateBuilder(args);
 // Add services to the container.
 builder.Services.AddControllersWithViews();
 
+// Options binding for LshVectorStore
+builder.Services.AddOptions<SemanticSearch.Services.LshVectorStoreOptions>()
+    .Bind(builder.Configuration.GetSection("VectorStore"))
+    .Validate(o => o.NumPlanes > 0 && o.NumPlanes <= 64 && o.NumTables > 0 && o.MaxCandidates >= 200,
+        "Invalid LshVectorStore options");
+
+// Register vector store from options
+builder.Services.AddSingleton<SemanticSearch.Services.IVectorStore>(sp =>
+{
+    var opts = sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<SemanticSearch.Services.LshVectorStoreOptions>>().Value;
+    return new SemanticSearch.Services.LshVectorStore(opts.NumTables, opts.NumPlanes, opts.MaxCandidates, opts.Seed);
+});
+
 // Register semantic search service as singleton (data generated at startup)
 builder.Services.AddSingleton<SemanticSearch.Services.ISemanticSearchService, SemanticSearch.Services.SemanticSearchService>();
 
