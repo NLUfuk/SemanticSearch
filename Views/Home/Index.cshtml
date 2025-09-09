@@ -13,15 +13,18 @@
         <div class="col-md-2">
             <div class="input-group">
                 <span class="input-group-text">Min Score</span>
-                <input type="number" name="minScore" step="0.01" min="0" max="1" value="@Model.MinScore.ToString("0.00")" class="form-control" />
+                <input type="number" id="minScoreInput" name="minScore" step="0.01" min="0" max="1" value="@Model.MinScore.ToString("0.00")" class="form-control" />
             </div>
         </div>
         <div class="col-md-2">
-            <select name="type" class="form-select">
-                <option value="hybrid" selected="@(ViewBag.Type=="hybrid"?"selected":null)">hybrid</option>
-                <option value="lexical" selected="@(ViewBag.Type=="lexical"?"selected":null)">lexical</option>
-                <option value="semantic" selected="@(ViewBag.Type=="semantic"?"selected":null)">semantic</option>
-            </select>
+            <div class="d-grid">
+                <input type="hidden" id="typeInput" name="type" value="@(ViewBag.Type ?? "hybrid")" />
+                <div class="btn-group" role="group">
+                    <button type="button" class="btn btn-outline-secondary @(ViewBag.Type=="hybrid"?"active":null)" onclick="setModeAndSubmit('hybrid', '0.10', this)">hybrid</button>
+                    <button type="button" class="btn btn-outline-secondary @(ViewBag.Type=="lexical"?"active":null)" onclick="setModeAndSubmit('lexical', '0.10', this)">lexical</button>
+                    <button type="button" class="btn btn-outline-secondary @(ViewBag.Type=="semantic"?"active":null)" onclick="setModeAndSubmit('semantic', '0.02', this)">semantic</button>
+                </div>
+            </div>
         </div>
         <div class="col-md-2">
             <div class="input-group">
@@ -34,6 +37,19 @@
         </div>
     </div>
 </form>
+
+<script>
+    function setModeAndSubmit(mode, defaultMinScore, btn){
+        document.getElementById('typeInput').value = mode;
+        var ms = document.getElementById('minScoreInput');
+        if(ms && (!ms.value || ms.value === '' || ms.value === '0.10' || ms.value === '0')){
+            ms.value = defaultMinScore; // semantic: 0.02, others: 0.10
+        }
+        // submit the parent form of the button
+        var form = btn.closest('form');
+        if(form) form.submit();
+    }
+</script>
 
 @if (!string.IsNullOrWhiteSpace(Model?.Query))
 {

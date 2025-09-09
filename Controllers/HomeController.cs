@@ -23,8 +23,9 @@ namespace SemanticSearch.Controllers
         [HttpGet]
         public IActionResult Index(string? q, float? minScore, string? type, float? alpha)
         {
-            var threshold = minScore ?? 0.10f; // varsayýlan eþik
             var mode = string.IsNullOrWhiteSpace(type) ? "hybrid" : type;
+            var defaultThreshold = mode == "semantic" ? 0.02f : 0.10f; // semantic modda eþik daha düþük
+            var threshold = minScore ?? defaultThreshold;
             var blend = alpha ?? 0.4f;
 
             var totalDocs = _search.AllDocuments.Count;
