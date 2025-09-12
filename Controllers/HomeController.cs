@@ -81,6 +81,12 @@ namespace SemanticSearch.Controllers
             return View(vm);
         }
 
+        [HttpGet]
+        public IActionResult Vector()
+        {
+            return View();
+        }
+
         [HttpGet("generate-texts")]
         public IActionResult GenerateTexts(int count = 1000)
         {

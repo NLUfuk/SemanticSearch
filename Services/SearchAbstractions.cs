@@ -2,6 +2,9 @@ namespace SemanticSearch.Services;
 
 public interface IEmbedder
 {
+    // Fit / initialize embedding model on a corpus (idempotent). Can be no-op for external API embedders.
+    void Fit(IEnumerable<string> corpus);
+    // Embed a single text into a float vector.
     float[] Embed(string text);
 }
 
@@ -19,4 +22,10 @@ public interface ILexicalStore
 public interface IRanker
 {
     IEnumerable<(string id, double score)> Rerank(string query, IEnumerable<(string id, double score)> candidates, int topK);
+}
+
+public interface ISynonymProvider
+{
+    string Expand(string query);
+    IReadOnlyDictionary<string, IReadOnlyList<string>> Map { get; }
 }

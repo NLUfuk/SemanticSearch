@@ -24,11 +24,13 @@ public class LuceneLexicalStore : ILexicalStore, IDisposable
     private readonly IndexWriter _writer;
     private readonly IndexSearcher _searcher;
     private readonly IndexReader _reader;
+    private readonly ISynonymProvider? _synonyms;
 
     private const LuceneVersion LV = LuceneVersion.LUCENE_48;
 
-    public LuceneLexicalStore(IEnumerable<SemanticSearch.Models.Document> docs)
+    public LuceneLexicalStore(IEnumerable<SemanticSearch.Models.Document> docs, ISynonymProvider? synonyms = null)
     {
+        _synonyms = synonyms;
         _analyzer = new TurkishAnalyzer(LV);
         _dir = new LuceneRAMDirectory();
         _writer = new IndexWriter(_dir, new IndexWriterConfig(LV, _analyzer));
@@ -54,12 +56,15 @@ public class LuceneLexicalStore : ILexicalStore, IDisposable
     public IEnumerable<(string id, double score)> Search(string query, int topK)
     {
         if (string.IsNullOrWhiteSpace(query)) yield break;
-        // Multi-field query: boost title and category
+        if (_synonyms is not null)
+        {
+            query = _synonyms.Expand(query);
+        }
         var qp = new MultiFieldQueryParser(LV,
             new[] { "title", "content", "category", "submitter" },
             _analyzer)
         {
-            DefaultOperator = QueryParserBase.AND_OPERATOR // set AND as default
+            DefaultOperator = QueryParserBase.AND_OPERATOR
         };
 
         var escaped = QueryParser.Escape(query);
@@ -73,7 +78,6 @@ public class LuceneLexicalStore : ILexicalStore, IDisposable
             { categoryQ, Occur.SHOULD }
         };
 
-        // Restrict fuzzy to avoid "müzik" -> "fizik" style matches
         var terms = query.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         var alpha = new Regex("^[A-Za-zÇÐÝÖÞÜçðýöþü]+$", RegexOptions.CultureInvariant);
         foreach (var t in terms.Select(s => s.ToLowerInvariant()))

@@ -1,11 +1,9 @@
 using Bogus;
 using Microsoft.ML;
-using Microsoft.ML.Data;
-using Microsoft.ML.Transforms.Text;
+using SemanticSearch.Models;
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using SemanticSearch.Models;
 
 namespace SemanticSearch.Services;
 
@@ -20,63 +18,33 @@ public class SemanticSearchService : ISemanticSearchService, IDisposable
     private readonly MLContext _ml;
     private readonly List<Document> _docs;
 
-    // ML.NET objects for text featurization (vector baseline)
-    private readonly ITransformer _featurizer;
-    private readonly float[][] _docVectors; // cached vectors for docs
+    private readonly IEmbedder _embedder;
+    private readonly float[][] _docVectors;
 
-    // Hybrid components
     private readonly IVectorStore _vecStore;
     private readonly ILexicalStore _lexStore;
 
     public IReadOnlyList<Document> AllDocuments => _docs;
 
-    public SemanticSearchService(IVectorStore vecStore)
+    public SemanticSearchService(IVectorStore vecStore, IEmbedder embedder, ISynonymProvider? synonyms = null)
     {
         _ml = new MLContext(seed: 42);
+        _embedder = embedder;
 
-        // 1) Generate fake documents
         _docs = GenerateFakeDocuments(1000);
 
-        // 2) Vector featurizer (hashed n-grams)
-        var data = _ml.Data.LoadFromEnumerable(_docs.Select(d => new DocInput { Text = BuildSearchText(d) }));
+        var corpus = _docs.Select(d => BuildSearchText(d)).ToList();
+        _embedder.Fit(corpus);
 
-        var featurizeOptions = new TextFeaturizingEstimator.Options
-        {
-            CaseMode = TextNormalizingEstimator.CaseMode.Lower,
-            KeepDiacritics = true, // müzik != muzik
-            KeepNumbers = true,
-            KeepPunctuations = false,
-            // Kelime n-gramlarý kalsýn, karakter n-gramlarýný kapat
-            WordFeatureExtractor = new WordBagEstimator.Options
-            {
-                NgramLength = 2,
-                UseAllLengths = true
-            },
-            CharFeatureExtractor = null
-        };
-        var pipeline = _ml.Transforms.Text.FeaturizeText(
-            outputColumnName: "Features",
-            inputColumnName: nameof(DocInput.Text)
-            // Remove: options: featurizeOptions
-);
-        _featurizer = pipeline.Fit(data);
+        _docVectors = corpus.Select(c => _embedder.Embed(c)).ToArray();
 
-        // 3) Cache vectors and fill vector store
-        var transformed = _featurizer.Transform(data);
-        _docVectors = _ml.Data.CreateEnumerable<DocFeatures>(transformed, reuseRowObject: false)
-            .Select(r => r.Features)
-            .Select(v => v is null ? Array.Empty<float>() : v)
-            .ToArray();
-
-        // Use injected vector store and populate
         _vecStore = vecStore;
         for (int i = 0; i < _docs.Count; i++)
         {
             _vecStore.Upsert(_docs[i].Id.ToString(), _docVectors[i], _docs[i]);
         }
 
-        // 4) Lucene lexical store (TurkishAnalyzer + BM25 + fuzzy)
-        _lexStore = new LuceneLexicalStore(_docs);
+        _lexStore = new LuceneLexicalStore(_docs, synonyms);
     }
 
     public (IReadOnlyList<SearchResult> results, int total) Search(string? query, int take = 20, float alpha = 0.4f, bool hybrid = true, string type = "hybrid")
@@ -108,7 +76,7 @@ public class SemanticSearchService : ISemanticSearchService, IDisposable
 
     private (IReadOnlyList<SearchResult>, int) RunSemantic(string query, int take)
     {
-        var qv = Vectorize(query);
+        var qv = _embedder.Embed(query);
         var hits = _vecStore.Similar(qv, take).ToList();
         var results = hits.Select(x => new SearchResult
         {
@@ -121,7 +89,7 @@ public class SemanticSearchService : ISemanticSearchService, IDisposable
     private (IReadOnlyList<SearchResult>, int) RunHybrid(string query, int take, float alpha)
     {
         var k = Math.Max(take * 5, 50);
-        var qVec = Vectorize(query);
+        var qVec = _embedder.Embed(query);
         var vecTop = _vecStore.Similar(qVec, k).ToDictionary(t => t.id, t => (double)t.cosine);
         var lexTop = _lexStore.Search(query, k).ToDictionary(t => t.id, t => t.score);
 
@@ -152,15 +120,6 @@ public class SemanticSearchService : ISemanticSearchService, IDisposable
         .ToList();
 
         return (merged, _docs.Count);
-    }
-
-    private float[] Vectorize(string text)
-    {
-        var input = new[] { new DocInput { Text = text } };
-        var view = _ml.Data.LoadFromEnumerable(input);
-        var transformed = _featurizer.Transform(view);
-        var row = _ml.Data.CreateEnumerable<DocFeatures>(transformed, reuseRowObject: false).First();
-        return row.Features ?? Array.Empty<float>();
     }
 
     private static string BuildSearchText(Document d)
@@ -211,16 +170,5 @@ public class SemanticSearchService : ISemanticSearchService, IDisposable
     {
         if (_lexStore is IDisposable disp)
             disp.Dispose();
-    }
-
-    private class DocInput
-    {
-        public string Text { get; set; } = string.Empty;
-    }
-
-    private class DocFeatures
-    {
-        [VectorType]
-        public float[]? Features { get; set; }
     }
 }

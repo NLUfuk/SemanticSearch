@@ -1,0 +1,47 @@
+@{
+    ViewData["Title"] = "Vector Playground";
+}
+<h2>Vector Playground</h2>
+<p>Metni göm veya manuel vektör girip arama yap.</p>
+<div class="row g-2">
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header">Metinden Embed + Search</div>
+      <div class="card-body">
+        <div class="mb-2"><input id="textInput" class="form-control" placeholder="Metin"/></div>
+        <div class="mb-2"><input id="topk1" type="number" value="10" min="1" class="form-control"/></div>
+        <button class="btn btn-primary" onclick="embedSearch()">Ara</button>
+        <pre id="out1" class="mt-2 small"></pre>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header">Vektör ile Search</div>
+      <div class="card-body">
+        <div class="mb-2"><textarea id="vecInput" class="form-control" rows="4" placeholder="0.1, 0.2, ..."></textarea></div>
+        <div class="mb-2"><input id="topk2" type="number" value="10" min="1" class="form-control"/></div>
+        <button class="btn btn-secondary" onclick="vectorSearch()">Ara</button>
+        <pre id="out2" class="mt-2 small"></pre>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+async function embedSearch(){
+  const text = document.getElementById('textInput').value || '';
+  const topK = parseInt(document.getElementById('topk1').value||'10');
+  const res = await fetch('/api/vector/embed-search', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({text, topK})});
+  const json = await res.json();
+  document.getElementById('out1').innerText = JSON.stringify(json, null, 2);
+}
+async function vectorSearch(){
+  const raw = document.getElementById('vecInput').value || '';
+  const vec = raw.split(/[,\s]+/).map(x=>parseFloat(x)).filter(x=>!isNaN(x));
+  const topK = parseInt(document.getElementById('topk2').value||'10');
+  const res = await fetch('/api/vector/search', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({vector: vec, topK})});
+  const json = await res.json();
+  document.getElementById('out2').innerText = JSON.stringify(json, null, 2);
+}
+</script>

@@ -1,6 +1,1 @@
-piyasa => ekonomi, borsa
-fb => fenerbahçe, fenerbahce
-bjk => beþiktaþ, besiktas
-gs => galatasaray
-telefon => gsm, cep
-bilgisayar => pc, bilgisayarlar, bilgisayarý
+ï»¿piyasa => fb 

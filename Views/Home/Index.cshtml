@@ -38,6 +38,13 @@
     </div>
 </form>
 
+<div class="mb-3">
+    <div class="d-flex align-items-center gap-2">
+        <button class="btn btn-sm btn-outline-secondary" type="button" onclick="openSynEditor()">Synonyms Düzenle</button>
+        <small class="text-muted">Biçim: root => s1, s2, s3</small>
+    </div>
+</div>
+
 <script>
     function setModeAndSubmit(mode, defaultMinScore, btn){
         document.getElementById('typeInput').value = mode;
@@ -48,6 +55,16 @@
         // submit the parent form of the button
         var form = btn.closest('form');
         if(form) form.submit();
+    }
+    async function openSynEditor(){
+        const resp = await fetch('/api/synonyms');
+        const txt = await resp.text();
+        const updated = prompt('Synonyms (root => s1, s2, s3)', txt);
+        if(updated !== null){
+            const save = await fetch('/api/synonyms', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(updated)});
+            if(save.ok){ alert('Kaydedildi. Aramalarda anında geçerli.'); }
+            else{ alert('Kaydetmede hata: ' + save.statusText); }
+        }
     }
 </script>
 
