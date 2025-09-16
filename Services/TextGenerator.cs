@@ -5,10 +5,7 @@ using System.Linq;
 
 namespace SemanticSearch.Services;
 
-/// <summary>
-/// Türkçe, konuya göre anlamlý paragraf üreten yardýmcý sýnýf.
-/// Python örneðinin C# uyarlamasý. Rastgele ama semantik tutarlý metinler üretir.
-/// </summary>
+
 public static class TextGenerator
 {
     private static readonly Random Rng = new Random();
